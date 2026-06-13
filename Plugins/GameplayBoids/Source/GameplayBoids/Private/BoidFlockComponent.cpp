@@ -4,14 +4,54 @@
 #include "Async/ParallelFor.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "DrawDebugHelpers.h"
+#include "Engine/World.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/PlayerController.h"
 #include "HAL/IConsoleManager.h"
+#include "UObject/UObjectIterator.h"
 
 static TAutoConsoleVariable<int32> CVarBoidDrawDebug(
 	TEXT("GameplayBoids.DrawDebug"),
 	0,
 	TEXT("Draw boid debug points and the grid occupancy heatmap. 0 = off, 1 = on."),
 	ECVF_Cheat);
+
+// Test helper: explode in front of the camera, hitting every flock in the world.
+// Args: [impulse=2000] [radius=800]. Negative impulse implodes.
+static void BoidExplodeCommand(const TArray<FString>& Args, UWorld* World)
+{
+	if (!World)
+	{
+		return;
+	}
+
+	const float Impulse = Args.Num() > 0 ? FCString::Atof(*Args[0]) : 2000.f;
+	const float Radius = Args.Num() > 1 ? FCString::Atof(*Args[1]) : 800.f;
+
+	APlayerController* PlayerController = World->GetFirstPlayerController();
+	if (!PlayerController)
+	{
+		return;
+	}
+
+	FVector ViewLocation;
+	FRotator ViewRotation;
+	PlayerController->GetPlayerViewPoint(ViewLocation, ViewRotation);
+	const FVector Center = ViewLocation + ViewRotation.Vector() * 1500.f;
+
+	for (TObjectIterator<UBoidFlockComponent> It; It; ++It)
+	{
+		if (It->GetWorld() == World)
+		{
+			It->AddRadialImpulse(Center, Radius, Impulse);
+		}
+	}
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GBoidExplodeCommand(
+	TEXT("GameplayBoids.Explode"),
+	TEXT("Explode (radial impulse) 1500u in front of the camera. Args: [impulse=2000] [radius=800]. Negative implodes."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BoidExplodeCommand));
 
 UBoidFlockComponent::UBoidFlockComponent()
 {
@@ -128,6 +168,43 @@ FBoidHandle UBoidFlockComponent::MakeHandle(int32 Index) const
 		Handle.Generation = SlotGeneration[Handle.Slot];
 	}
 	return Handle;
+}
+
+void UBoidFlockComponent::AddRadialImpulse(const FVector& Center, float Radius, float Impulse)
+{
+	if (!Grid.IsBuilt() || Radius <= 0.f)
+	{
+		return;
+	}
+
+	const FVector3f Center3f(Center);
+
+	Grid.ForEachBoidInCellRange(Center3f, Radius, [&](int32 Index)
+	{
+		const FVector3f Offset = Positions[Index] - Center3f;
+		const float Dist = Offset.Size();
+		if (Dist > Radius)
+		{
+			return;
+		}
+
+		const FVector3f Direction = Dist > UE_KINDA_SMALL_NUMBER ? Offset / Dist : FVector3f(FMath::VRand());
+		const float Falloff = 1.f - Dist / Radius;
+		const float Mass = FMath::Max(ParamsFor(Index).Mass, UE_KINDA_SMALL_NUMBER);
+
+		Velocities[Index] += Direction * (Impulse * Falloff / Mass);
+	});
+
+#if ENABLE_DRAW_DEBUG
+	if (CVarBoidDrawDebug.GetValueOnGameThread() > 0)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			const FColor Color = Impulse >= 0.f ? FColor::Red : FColor::Cyan;
+			DrawDebugSphere(World, Center, Radius, 16, Color, false, 0.5f);
+		}
+	}
+#endif
 }
 
 void UBoidFlockComponent::CreateSpeciesRenderers()
@@ -321,7 +398,12 @@ void UBoidFlockComponent::Integrate(float DeltaTime)
 		const float Speed = Velocity.Size();
 		if (Speed > UE_KINDA_SMALL_NUMBER)
 		{
-			Velocity *= FMath::Clamp(Speed, Params.MinSpeed, Params.MaxSpeed) / Speed;
+			float NewSpeed = FMath::Max(Speed, Params.MinSpeed);
+			if (NewSpeed > Params.MaxSpeed)
+			{
+				NewSpeed = Params.MaxSpeed + (NewSpeed - Params.MaxSpeed) * FMath::Exp(-Params.OverSpeedDamping * DeltaTime);
+			}
+			Velocity *= NewSpeed / Speed;
 		}
 
 		Velocities[Index] = Velocity;

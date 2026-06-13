@@ -59,6 +59,20 @@ public:
 
 	FORCEINLINE int32 GetNumBoids() const { return Positions.Num(); }
 
+	/**
+	 * @brief Applies a one-shot radial velocity impulse to every boid within Radius of Center.
+	 *
+	 * Positive Impulse pushes boids outward (explosion); negative pulls them inward (implosion).
+	 * The kick is scaled by each species' Mass (heavier boids move less) and falls off linearly to
+	 * zero at the edge.
+	 *
+	 * @param Center   World-space center of the impulse.
+	 * @param Radius   Boids within this distance are affected.
+	 * @param Impulse  Velocity change at the center; sign chooses push (+) or pull (-).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "GameplayBoids")
+	void AddRadialImpulse(const FVector& Center, float Radius, float Impulse);
+
 private:
 	void CreateSpeciesRenderers();
 
