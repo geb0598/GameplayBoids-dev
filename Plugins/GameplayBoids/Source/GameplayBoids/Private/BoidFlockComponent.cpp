@@ -388,7 +388,11 @@ FVector3f UBoidFlockComponent::ComputeSteeringForce(int32 Index) const
 
 void UBoidFlockComponent::Integrate(float DeltaTime)
 {
-	ParallelFor(Positions.Num(), [this, DeltaTime](int32 Index)
+	const FVector3f Center = FVector3f(GetComponentLocation());
+	const FVector3f Min = Center - SpawnExtent;
+	const FVector3f Max = Center + SpawnExtent;
+
+	ParallelFor(Positions.Num(), [this, DeltaTime, Min, Max](int32 Index)
 	{
 		const FBoidSimParams& Params = ParamsFor(Index);
 
@@ -406,8 +410,24 @@ void UBoidFlockComponent::Integrate(float DeltaTime)
 			Velocity *= NewSpeed / Speed;
 		}
 
+		FVector3f NewPosition = Positions[Index] + Velocity * DeltaTime;
+
+		for (int32 Axis = 0; Axis < 3; ++Axis)
+		{
+			if (NewPosition[Axis] < Min[Axis])
+			{
+				NewPosition[Axis] = Min[Axis];
+				Velocity[Axis] = FMath::Max(Velocity[Axis], 0.f);
+			}
+			else if (NewPosition[Axis] > Max[Axis])
+			{
+				NewPosition[Axis] = Max[Axis];
+				Velocity[Axis] = FMath::Min(Velocity[Axis], 0.f);
+			}
+		}
+
 		Velocities[Index] = Velocity;
-		Positions[Index] += Velocity * DeltaTime;
+		Positions[Index] = NewPosition;
 	});
 }
 
