@@ -43,9 +43,13 @@ struct GAMEPLAYBOIDS_API FBoidSimParams
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids|Movement", meta = (ClampMin = "0"))
 	float MaxSpeed = 600.f;
 
-	/** Per-rule steering force cap before weighting; governs turn agility. */
+	/** Per-rule steering force cap before weighting; higher = snappier turns (effective agility is MaxSteerForce / Mass). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids|Movement", meta = (ClampMin = "0"))
 	float MaxSteerForce = 600.f;
+
+	/** Inertia: steering forces are divided by this to get acceleration. Heavier boids react more sluggishly. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids|Movement", meta = (ClampMin = "0.01"))
+	float Mass = 1.f;
 
 	/** Decay rate (1/s) pulling impulse-boosted speed back down to MaxSpeed. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids|Movement", meta = (ClampMin = "0"))
@@ -76,6 +80,10 @@ struct GAMEPLAYBOIDS_API FBoidSimParams
 	/** Strength of steering toward the neighbors' center of mass. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids|Behavior", meta = (ClampMin = "0"))
 	float CohesionWeight = 1.f;
+
+	/** Max flockmates considered per boid; caps worst-case cost when boids clump up. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids|Behavior", meta = (ClampMin = "1"))
+	int32 MaxNeighbors = 16;
 
 	// --- Bounds ---
 
