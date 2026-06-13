@@ -1,0 +1,28 @@
+# --- Unreal Engine generated ---
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+*.VC.db
+*.VC.opendb
+
+# --- Visual Studio / Rider / IDE ---
+.vs/
+.idea/
+*.sln
+*.suo
+*.sdf
+*.opensdf
+
+# Plugin build artifacts (same as project)
+Plugins/**/Binaries/
+Plugins/**/Intermediate/
+
+# --- Claude-related (local only, not tracked) ---
+.claude/
+CLAUDE.md
+ClaudeDocs/
+
+# --- OS ---
+Thumbs.db
+.DS_Store
