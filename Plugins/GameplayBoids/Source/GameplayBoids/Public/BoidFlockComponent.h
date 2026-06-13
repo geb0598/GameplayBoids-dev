@@ -6,6 +6,26 @@
 #include "BoidGrid.h"
 #include "BoidFlockComponent.generated.h"
 
+class UBoidSpeciesAsset;
+class UInstancedStaticMeshComponent;
+
+/**
+ * @brief One species in a flock: which species asset to spawn, and how many.
+ */
+USTRUCT(BlueprintType)
+struct FBoidSpeciesEntry
+{
+	GENERATED_BODY()
+
+	/** Species definition (mesh + behavior). */
+	UPROPERTY(EditAnywhere, Category = "GameplayBoids")
+	TObjectPtr<UBoidSpeciesAsset> Asset;
+
+	/** How many boids of this species to spawn. */
+	UPROPERTY(EditAnywhere, Category = "GameplayBoids", meta = (ClampMin = "0"))
+	int32 Count = 500;
+};
+
 /**
  * @brief A self-contained boid flock, simulated as data-oriented parallel arrays (SoA).
  *
@@ -40,9 +60,14 @@ public:
 	FORCEINLINE int32 GetNumBoids() const { return Positions.Num(); }
 
 private:
+	void CreateSpeciesRenderers();
+
 	void SpawnInitialBoids();
 
-	FVector3f SteerTowards(const FVector3f& Direction, const FVector3f& Velocity) const;
+	/** Sim params of the species that owns the boid at the given dense index. */
+	const FBoidSimParams& ParamsFor(int32 Index) const;
+
+	FVector3f SteerTowards(const FVector3f& Direction, const FVector3f& Velocity, const FBoidSimParams& Params) const;
 
 	FVector3f ComputeBoundsForce(int32 Index) const;
 
@@ -50,18 +75,18 @@ private:
 
 	void Integrate(float DeltaTime);
 
+	void UpdateRenderInstances();
+
 	void DrawDebug() const;
 
 	// --- Config (editable in the owning actor's details panel) ---
 
+	/** Species in this flock; the array index is each boid's SpeciesId. */
 	UPROPERTY(EditAnywhere, Category = "GameplayBoids")
-	FBoidSimParams Params;
+	TArray<FBoidSpeciesEntry> Species;
 
 	UPROPERTY(EditAnywhere, Category = "GameplayBoids")
 	FBoidGrid Grid;
-
-	UPROPERTY(EditAnywhere, Category = "GameplayBoids", meta = (ClampMin = "1"))
-	int32 MaxBoids = 1000;
 
 	/** Half-size of the volume boids spawn into and are softly kept within, around the owner. */
 	UPROPERTY(EditAnywhere, Category = "GameplayBoids")
@@ -81,9 +106,17 @@ private:
 	UPROPERTY(EditAnywhere, Category = "GameplayBoids|Debug")
 	bool bDrawSpawnBounds = false;
 
-	/** Draw the soft-bounds volume: outer edge and the inner edge where turn-back begins. */
+	/** Draw the soft-bounds volume boids are kept within. */
 	UPROPERTY(EditAnywhere, Category = "GameplayBoids|Debug")
 	bool bDrawBounds = false;
+
+	// --- Per-species renderers: one instanced-mesh component per Species entry ---
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UInstancedStaticMeshComponent>> SpeciesRenderers;
+
+	/** Reused per frame to bucket boid transforms by species before updating the renderers. */
+	TArray<TArray<FTransform>> SpeciesTransforms;
 
 	// --- Per-boid SoA state: parallel arrays sharing one index per boid ---
 
@@ -91,7 +124,7 @@ private:
 
 	TArray<FVector3f> Velocities;
 
-	/** Unused for now (all 0); kept so the swap-remove path already handles a third array. */
+	/** Species index of each boid, into the Species / SpeciesRenderers arrays. */
 	TArray<uint8> SpeciesIds;
 
 	/** Per-boid steering force for the current frame; written by the steering pass, divided by Mass and integrated by Integrate. */

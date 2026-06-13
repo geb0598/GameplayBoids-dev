@@ -1,7 +1,10 @@
 #include "BoidFlockComponent.h"
 
+#include "BoidSpeciesAsset.h"
 #include "Async/ParallelFor.h"
+#include "Components/InstancedStaticMeshComponent.h"
 #include "DrawDebugHelpers.h"
+#include "GameFramework/Actor.h"
 #include "HAL/IConsoleManager.h"
 
 static TAutoConsoleVariable<int32> CVarBoidDrawDebug(
@@ -19,6 +22,7 @@ void UBoidFlockComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
+	CreateSpeciesRenderers();
 	SpawnInitialBoids();
 }
 
@@ -42,6 +46,8 @@ void UBoidFlockComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 	});
 
 	Integrate(DeltaTime);
+
+	UpdateRenderInstances();
 
 	if (CVarBoidDrawDebug.GetValueOnGameThread() > 0)
 	{
@@ -124,33 +130,84 @@ FBoidHandle UBoidFlockComponent::MakeHandle(int32 Index) const
 	return Handle;
 }
 
-void UBoidFlockComponent::SpawnInitialBoids()
+void UBoidFlockComponent::CreateSpeciesRenderers()
 {
-	Positions.Reserve(MaxBoids);
-	Velocities.Reserve(MaxBoids);
-	SpeciesIds.Reserve(MaxBoids);
-	IndexToSlot.Reserve(MaxBoids);
-	SlotToIndex.Reserve(MaxBoids);
-	SlotGeneration.Reserve(MaxBoids);
+	SpeciesRenderers.Reserve(Species.Num());
 
-	const FVector3f Center = FVector3f(GetComponentLocation());
-
-	for (int32 i = 0; i < MaxBoids; ++i)
+	for (const FBoidSpeciesEntry& Entry : Species)
 	{
-		const FVector3f Position = Center + FVector3f(
-			FMath::FRandRange(-SpawnExtent.X, SpawnExtent.X),
-			FMath::FRandRange(-SpawnExtent.Y, SpawnExtent.Y),
-			FMath::FRandRange(-SpawnExtent.Z, SpawnExtent.Z));
+		UInstancedStaticMeshComponent* Renderer = nullptr;
 
-		FVector3f Direction = FVector3f(FMath::VRand());
-		Direction.Z *= 0.2f;
-		const FVector3f Velocity = Direction.GetSafeNormal() * FMath::FRandRange(Params.MinSpeed, Params.MaxSpeed);
+		if (Entry.Asset && Entry.Asset->Mesh)
+		{
+			Renderer = NewObject<UInstancedStaticMeshComponent>(GetOwner());
+			Renderer->SetupAttachment(this);
+			Renderer->SetStaticMesh(Entry.Asset->Mesh);
+			if (Entry.Asset->Material)
+			{
+				Renderer->SetMaterial(0, Entry.Asset->Material);
+			}
+			Renderer->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			Renderer->SetCanEverAffectNavigation(false);
+			Renderer->RegisterComponent();
+		}
 
-		SpawnBoid(Position, Velocity);
+		SpeciesRenderers.Add(Renderer);
 	}
 }
 
-FVector3f UBoidFlockComponent::SteerTowards(const FVector3f& Direction, const FVector3f& Velocity) const
+void UBoidFlockComponent::SpawnInitialBoids()
+{
+	int32 Total = 0;
+	for (const FBoidSpeciesEntry& Entry : Species)
+	{
+		if (Entry.Asset && Entry.Asset->Mesh)
+		{
+			Total += Entry.Count;
+		}
+	}
+
+	Positions.Reserve(Total);
+	Velocities.Reserve(Total);
+	SpeciesIds.Reserve(Total);
+	IndexToSlot.Reserve(Total);
+	SlotToIndex.Reserve(Total);
+	SlotGeneration.Reserve(Total);
+
+	const FVector3f Center = FVector3f(GetComponentLocation());
+
+	for (int32 s = 0; s < Species.Num(); ++s)
+	{
+		const FBoidSpeciesEntry& Entry = Species[s];
+		if (!Entry.Asset || !Entry.Asset->Mesh)
+		{
+			continue;
+		}
+
+		const FBoidSimParams& Params = Entry.Asset->Params;
+
+		for (int32 i = 0; i < Entry.Count; ++i)
+		{
+			const FVector3f Position = Center + FVector3f(
+				FMath::FRandRange(-SpawnExtent.X, SpawnExtent.X),
+				FMath::FRandRange(-SpawnExtent.Y, SpawnExtent.Y),
+				FMath::FRandRange(-SpawnExtent.Z, SpawnExtent.Z));
+
+			FVector3f Direction = FVector3f(FMath::VRand());
+			Direction.Z *= 0.2f;
+			const FVector3f Velocity = Direction.GetSafeNormal() * FMath::FRandRange(Params.MinSpeed, Params.MaxSpeed);
+
+			SpawnBoid(Position, Velocity, static_cast<uint8>(s));
+		}
+	}
+}
+
+const FBoidSimParams& UBoidFlockComponent::ParamsFor(int32 Index) const
+{
+	return Species[SpeciesIds[Index]].Asset->Params;
+}
+
+FVector3f UBoidFlockComponent::SteerTowards(const FVector3f& Direction, const FVector3f& Velocity, const FBoidSimParams& Params) const
 {
 	if (Direction.IsNearlyZero())
 	{
@@ -163,9 +220,11 @@ FVector3f UBoidFlockComponent::SteerTowards(const FVector3f& Direction, const FV
 
 FVector3f UBoidFlockComponent::ComputeBoundsForce(int32 Index) const
 {
+	const FBoidSimParams& Params = ParamsFor(Index);
+
 	const FVector3f RelativePos = Positions[Index] - FVector3f(GetComponentLocation());
 
-	auto AxisPush = [this](float Pos, float Extent)
+	auto AxisPush = [&Params](float Pos, float Extent)
 	{
 		const float SoftEdge = Extent - Params.BoundsMargin;
 		if (FMath::Abs(Pos) <= SoftEdge)
@@ -187,11 +246,13 @@ FVector3f UBoidFlockComponent::ComputeBoundsForce(int32 Index) const
 		return FVector3f::ZeroVector;
 	}
 
-	return SteerTowards(Push, Velocities[Index]) * FMath::Min(Push.Size(), 1.f);
+	return SteerTowards(Push, Velocities[Index], Params) * FMath::Min(Push.Size(), 1.f);
 }
 
 FVector3f UBoidFlockComponent::ComputeSteeringForce(int32 Index) const
 {
+	const FBoidSimParams& Params = ParamsFor(Index);
+
 	const FVector3f Position = Positions[Index];
 	const FVector3f Velocity = Velocities[Index];
 	const FVector3f Forward = Velocity.GetSafeNormal();
@@ -240,9 +301,9 @@ FVector3f UBoidFlockComponent::ComputeSteeringForce(int32 Index) const
 
 	if (NumPerceivedBoids > 0)
 	{
-		Force += SteerTowards(SeparationSum, Velocity) * Params.SeparationWeight;
-		Force += SteerTowards(VelocitySum, Velocity) * Params.AlignmentWeight;
-		Force += SteerTowards(PositionSum / static_cast<float>(NumPerceivedBoids) - Position, Velocity) * Params.CohesionWeight;
+		Force += SteerTowards(SeparationSum, Velocity, Params) * Params.SeparationWeight;
+		Force += SteerTowards(VelocitySum, Velocity, Params) * Params.AlignmentWeight;
+		Force += SteerTowards(PositionSum / static_cast<float>(NumPerceivedBoids) - Position, Velocity, Params) * Params.CohesionWeight;
 	}
 
 	return Force;
@@ -252,6 +313,8 @@ void UBoidFlockComponent::Integrate(float DeltaTime)
 {
 	ParallelFor(Positions.Num(), [this, DeltaTime](int32 Index)
 	{
+		const FBoidSimParams& Params = ParamsFor(Index);
+
 		const FVector3f Acceleration = Forces[Index] / Params.Mass;
 		FVector3f Velocity = Velocities[Index] + Acceleration * DeltaTime;
 
@@ -264,6 +327,48 @@ void UBoidFlockComponent::Integrate(float DeltaTime)
 		Velocities[Index] = Velocity;
 		Positions[Index] += Velocity * DeltaTime;
 	});
+}
+
+void UBoidFlockComponent::UpdateRenderInstances()
+{
+	SpeciesTransforms.SetNum(Species.Num());
+	for (TArray<FTransform>& Bucket : SpeciesTransforms)
+	{
+		Bucket.Reset();
+	}
+
+	for (int32 i = 0; i < Positions.Num(); ++i)
+	{
+		const int32 SpeciesId = SpeciesIds[i];
+		const float Scale = Species[SpeciesId].Asset->MeshScale;
+
+		const FVector Velocity(Velocities[i]);
+		const FQuat Rotation = Velocity.IsNearlyZero()
+			? FQuat::Identity
+			: FRotationMatrix::MakeFromX(Velocity).ToQuat();
+
+		SpeciesTransforms[SpeciesId].Emplace(Rotation, FVector(Positions[i]), FVector(Scale));
+	}
+
+	for (int32 s = 0; s < SpeciesRenderers.Num(); ++s)
+	{
+		UInstancedStaticMeshComponent* Renderer = SpeciesRenderers[s];
+		if (!Renderer)
+		{
+			continue;
+		}
+
+		const TArray<FTransform>& Transforms = SpeciesTransforms[s];
+		if (Renderer->GetInstanceCount() != Transforms.Num())
+		{
+			Renderer->ClearInstances();
+			Renderer->AddInstances(Transforms, false, true);
+		}
+		else
+		{
+			Renderer->BatchUpdateInstancesTransforms(0, Transforms, true, true,  true);
+		}
+	}
 }
 
 void UBoidFlockComponent::DrawDebug() const
@@ -308,11 +413,5 @@ void UBoidFlockComponent::DrawDebug() const
 	if (bDrawBounds)
 	{
 		DrawDebugBox(World, Center, FVector(SpawnExtent), FColor::Orange, false, -1.f, 0, 2.f);
-
-		const FVector InnerExtent = FVector(SpawnExtent) - FVector(Params.BoundsMargin);
-		if (InnerExtent.GetMin() > 0.f)
-		{
-			DrawDebugBox(World, Center, InnerExtent, FColor::Yellow, false, -1.f, 0, 1.f);
-		}
 	}
 }
