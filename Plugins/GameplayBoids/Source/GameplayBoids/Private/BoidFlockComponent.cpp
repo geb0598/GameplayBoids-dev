@@ -166,22 +166,8 @@ FBoidHandle UBoidFlockComponent::SpawnBoid(const FVector3f& Position, const FVec
 	Velocities.Add(Velocity);
 	SpeciesIds.Add(SpeciesId);
 
-	int32 Slot;
-	if (FreeSlots.Num() > 0)
-	{
-		Slot = FreeSlots.Pop(EAllowShrinking::No);
-		SlotToIndex[Slot] = Index;
-	}
-	else
-	{
-		Slot = SlotToIndex.Add(Index);
-		SlotGeneration.Add(0);
-	}
-	IndexToSlot.Add(Slot);
-
 	FBoidHandle Handle;
-	Handle.Slot = Slot;
-	Handle.Generation = SlotGeneration[Slot];
+	BoidSlots.Add(Index, Handle.Slot, Handle.Generation);
 	return Handle;
 }
 
@@ -192,46 +178,30 @@ void UBoidFlockComponent::DespawnBoid(int32 Index)
 		return;
 	}
 
-	const int32 Slot = IndexToSlot[Index];
-	++SlotGeneration[Slot];
-	SlotToIndex[Slot] = INDEX_NONE;
-	FreeSlots.Add(Slot);
-
 	const int32 Last = Positions.Num() - 1;
+	BoidSlots.RemoveAt(Index, Last);
+
 	if (Index != Last)
 	{
 		Positions[Index] = Positions[Last];
 		Velocities[Index] = Velocities[Last];
 		SpeciesIds[Index] = SpeciesIds[Last];
-
-		const int32 MovedSlot = IndexToSlot[Last];
-		IndexToSlot[Index] = MovedSlot;
-		SlotToIndex[MovedSlot] = Index;
 	}
 
 	Positions.Pop(EAllowShrinking::No);
 	Velocities.Pop(EAllowShrinking::No);
 	SpeciesIds.Pop(EAllowShrinking::No);
-	IndexToSlot.Pop(EAllowShrinking::No);
 }
 
 int32 UBoidFlockComponent::ResolveHandle(const FBoidHandle& Handle) const
 {
-	if (Handle.IsSet() && SlotGeneration.IsValidIndex(Handle.Slot) && SlotGeneration[Handle.Slot] == Handle.Generation)
-	{
-		return SlotToIndex[Handle.Slot];
-	}
-	return INDEX_NONE;
+	return BoidSlots.Resolve(Handle.Slot, Handle.Generation);
 }
 
 FBoidHandle UBoidFlockComponent::MakeHandle(int32 Index) const
 {
 	FBoidHandle Handle;
-	if (IndexToSlot.IsValidIndex(Index))
-	{
-		Handle.Slot = IndexToSlot[Index];
-		Handle.Generation = SlotGeneration[Handle.Slot];
-	}
+	BoidSlots.TryGetSlot(Index, Handle.Slot, Handle.Generation);
 	return Handle;
 }
 
@@ -276,66 +246,43 @@ FBoidObstacleHandle UBoidFlockComponent::AddObstacle(const FBoidObstacle& Obstac
 {
 	const int32 Index = Obstacles.Add(Obstacle);
 
-	int32 Slot;
-	if (ObstacleFreeSlots.Num() > 0)
-	{
-		Slot = ObstacleFreeSlots.Pop(EAllowShrinking::No);
-		ObstacleSlotToIndex[Slot] = Index;
-	}
-	else
-	{
-		Slot = ObstacleSlotToIndex.Add(Index);
-		ObstacleSlotGeneration.Add(0);
-	}
-	ObstacleIndexToSlot.Add(Slot);
-
 	FBoidObstacleHandle Handle;
-	Handle.Slot = Slot;
-	Handle.Generation = ObstacleSlotGeneration[Slot];
+	ObstacleSlots.Add(Index, Handle.Slot, Handle.Generation);
 	return Handle;
 }
 
 void UBoidFlockComponent::UpdateObstacle(const FBoidObstacleHandle& Handle, const FBoidObstacle& Obstacle)
 {
-	if (Handle.IsSet() && ObstacleSlotGeneration.IsValidIndex(Handle.Slot) && ObstacleSlotGeneration[Handle.Slot] == Handle.Generation)
+	const int32 Index = ObstacleSlots.Resolve(Handle.Slot, Handle.Generation);
+	if (Index != INDEX_NONE)
 	{
-		Obstacles[ObstacleSlotToIndex[Handle.Slot]] = Obstacle;
+		Obstacles[Index] = Obstacle;
 	}
 }
 
 void UBoidFlockComponent::RemoveObstacle(const FBoidObstacleHandle& Handle)
 {
-	if (!Handle.IsSet() || !ObstacleSlotGeneration.IsValidIndex(Handle.Slot) || ObstacleSlotGeneration[Handle.Slot] != Handle.Generation)
+	const int32 Index = ObstacleSlots.Resolve(Handle.Slot, Handle.Generation);
+	if (Index == INDEX_NONE)
 	{
 		return;
 	}
 
-	const int32 Index = ObstacleSlotToIndex[Handle.Slot];
-	++ObstacleSlotGeneration[Handle.Slot];
-	ObstacleSlotToIndex[Handle.Slot] = INDEX_NONE;
-	ObstacleFreeSlots.Add(Handle.Slot);
-
 	const int32 Last = Obstacles.Num() - 1;
+	ObstacleSlots.RemoveAt(Index, Last);
+
 	if (Index != Last)
 	{
 		Obstacles[Index] = Obstacles[Last];
-
-		const int32 MovedSlot = ObstacleIndexToSlot[Last];
-		ObstacleIndexToSlot[Index] = MovedSlot;
-		ObstacleSlotToIndex[MovedSlot] = Index;
 	}
 
 	Obstacles.Pop(EAllowShrinking::No);
-	ObstacleIndexToSlot.Pop(EAllowShrinking::No);
 }
 
 void UBoidFlockComponent::ClearObstacles()
 {
 	Obstacles.Reset();
-	ObstacleSlotToIndex.Reset();
-	ObstacleSlotGeneration.Reset();
-	ObstacleIndexToSlot.Reset();
-	ObstacleFreeSlots.Reset();
+	ObstacleSlots.Reset();
 }
 
 void UBoidFlockComponent::ResolveObstacles()
@@ -411,9 +358,7 @@ void UBoidFlockComponent::SpawnInitialBoids()
 	Positions.Reserve(Total);
 	Velocities.Reserve(Total);
 	SpeciesIds.Reserve(Total);
-	IndexToSlot.Reserve(Total);
-	SlotToIndex.Reserve(Total);
-	SlotGeneration.Reserve(Total);
+	BoidSlots.Reserve(Total);
 
 	const FVector3f Center = FVector3f(GetComponentLocation());
 

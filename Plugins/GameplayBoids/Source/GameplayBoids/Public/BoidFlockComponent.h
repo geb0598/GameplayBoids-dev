@@ -4,6 +4,7 @@
 #include "Components/SceneComponent.h"
 #include "BoidTypes.h"
 #include "BoidGrid.h"
+#include "BoidSlotMap.h"
 #include "BoidFlockComponent.generated.h"
 
 class UBoidSpeciesAsset;
@@ -171,29 +172,13 @@ private:
 	/** Per-boid steering force for the current frame; written by the steering pass, divided by Mass and integrated by Integrate. */
 	TArray<FVector3f> Forces;
 
-	// --- Slot map: gives handles a stable identity over the swap-removed dense arrays ---
+	/** Stable handles over the swap-removed boid arrays. */
+	FBoidSlotMap BoidSlots;
 
-	/** Slot -> current dense index, or INDEX_NONE when the slot is free. */
-	TArray<int32> SlotToIndex;
-
-	/** Slot -> reuse counter; a handle is stale once it no longer matches. */
-	TArray<uint32> SlotGeneration;
-
-	/** Dense index -> the slot that owns that boid. */
-	TArray<int32> IndexToSlot;
-
-	/** Slots whose boids died, waiting to be reused. */
-	TArray<int32> FreeSlots;
-
-	// --- Registered obstacles (dense) with their own slot map for stable handles ---
+	// --- Registered obstacles (dense) ---
 
 	TArray<FBoidObstacle> Obstacles;
 
-	TArray<int32> ObstacleSlotToIndex;
-
-	TArray<uint32> ObstacleSlotGeneration;
-
-	TArray<int32> ObstacleIndexToSlot;
-
-	TArray<int32> ObstacleFreeSlots;
+	/** Stable handles over the swap-removed obstacle array. */
+	FBoidSlotMap ObstacleSlots;
 };
