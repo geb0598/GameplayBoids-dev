@@ -4,6 +4,7 @@
 #include "Async/ParallelFor.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "DrawDebugHelpers.h"
+#include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "GameFramework/PlayerController.h"
@@ -89,6 +90,46 @@ static FAutoConsoleCommandWithWorldAndArgs GBoidAddObstacleCommand(
 	TEXT("GameplayBoids.AddObstacle"),
 	TEXT("Add a sphere obstacle 1500u in front of the camera. Args: [radius=500]."),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BoidAddObstacleCommand));
+
+// Test helper: add a thin box wall facing the camera to every flock.
+static void BoidAddBoxCommand(const TArray<FString>& Args, UWorld* World)
+{
+	if (!World)
+	{
+		return;
+	}
+
+	APlayerController* PlayerController = World->GetFirstPlayerController();
+	if (!PlayerController)
+	{
+		return;
+	}
+
+	FVector ViewLocation;
+	FRotator ViewRotation;
+	PlayerController->GetPlayerViewPoint(ViewLocation, ViewRotation);
+
+	const float HalfSize = Args.Num() > 0 ? FCString::Atof(*Args[0]) : 500.f;
+
+	FBoidObstacle Obstacle;
+	Obstacle.Shape = EBoidObstacleShape::Box;
+	Obstacle.Center = FVector3f(ViewLocation + ViewRotation.Vector() * 1500.f);
+	Obstacle.Extent = FVector3f(50.f, HalfSize, HalfSize);   // thin along local X (facing the camera)
+	Obstacle.Rotation = FRotator(0.f, ViewRotation.Yaw, 0.f);
+
+	for (TObjectIterator<UBoidFlockComponent> It; It; ++It)
+	{
+		if (It->GetWorld() == World)
+		{
+			It->AddObstacle(Obstacle);
+		}
+	}
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GBoidAddBoxCommand(
+	TEXT("GameplayBoids.AddBox"),
+	TEXT("Add a thin box wall facing the camera. Args: [halfSize=500]."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BoidAddBoxCommand));
 
 static void BoidClearObstaclesCommand(const TArray<FString>& Args, UWorld* World)
 {
@@ -300,14 +341,17 @@ void UBoidFlockComponent::ResolveObstacles()
 	{
 		Grid.ForEachBoidInCellRange(Obstacle.Center, Obstacle.BoundingRadius() + QueryMargin, [&](int32 Index)
 		{
+			// Treat the boid as a sphere: its surface touches once the center is within CollisionRadius.
+			const float BoidRadius = ParamsFor(Index).CollisionRadius;
+
 			FVector3f Normal;
 			const float Distance = Obstacle.SignedDistance(Positions[Index], Normal);
-			if (Distance >= 0.f)
+			if (Distance >= BoidRadius)
 			{
 				return;
 			}
 
-			Positions[Index] -= Normal * Distance;
+			Positions[Index] += Normal * (BoidRadius - Distance);
 
 			const float NormalVelocity = Velocities[Index] | Normal;
 			if (NormalVelocity < 0.f)
@@ -630,7 +674,80 @@ void UBoidFlockComponent::DrawDebug() const
 	{
 		for (const FBoidObstacle& Obstacle : Obstacles)
 		{
-			DrawDebugSphere(World, FVector(Obstacle.Center), Obstacle.BoundingRadius(), 16, FColor::Yellow, false, -1.f);
+			if (Obstacle.Shape == EBoidObstacleShape::Box)
+			{
+				DrawDebugBox(World, FVector(Obstacle.Center), FVector(Obstacle.Extent), Obstacle.Rotation.Quaternion(), FColor::Yellow, false, -1.f);
+			}
+			else
+			{
+				DrawDebugSphere(World, FVector(Obstacle.Center), Obstacle.Radius, 16, FColor::Yellow, false, -1.f);
+			}
 		}
+	}
+
+	const bool bAnyPerBoid = bDrawBoidVelocity || bDrawBoidForce || bDrawBoidPerception || bDrawBoidSeparation || bDrawBoidCollision || bDrawBoidFOV;
+	if (bAnyPerBoid)
+	{
+		const int32 SampleCount = FMath::Min(DebugSampleCount, Positions.Num());
+		for (int32 Index = 0; Index < SampleCount; ++Index)
+		{
+			const FVector Position(Positions[Index]);
+			const FBoidSimParams& Params = ParamsFor(Index);
+
+			if (bDrawBoidVelocity)
+			{
+				DrawDebugDirectionalArrow(World, Position, Position + FVector(Velocities[Index]) * 0.25f, 30.f, FColor::White, false, -1.f);
+			}
+
+			if (bDrawBoidForce && Forces.IsValidIndex(Index))
+			{
+				DrawDebugDirectionalArrow(World, Position, Position + FVector(Forces[Index]) * 0.25f, 30.f, FColor::Magenta, false, -1.f);
+			}
+
+			if (bDrawBoidPerception)
+			{
+				DrawDebugSphere(World, Position, Params.PerceptionRadius, 12, FColor(64, 64, 255), false, -1.f);
+			}
+
+			if (bDrawBoidSeparation)
+			{
+				DrawDebugSphere(World, Position, Params.SeparationRadius, 10, FColor::Orange, false, -1.f);
+			}
+
+			if (bDrawBoidCollision)
+			{
+				DrawDebugSphere(World, Position, Params.CollisionRadius, 8, FColor(255, 64, 64), false, -1.f);
+			}
+
+			if (bDrawBoidFOV && !Velocities[Index].IsNearlyZero())
+			{
+				const FVector Direction(-Velocities[Index].GetSafeNormal());
+				const float HalfAngle = FMath::DegreesToRadians(Params.FieldOfViewDegrees * 0.5f);
+				DrawDebugCone(World, Position, Direction, Params.PerceptionRadius, HalfAngle, HalfAngle, 16, FColor::Cyan, false, -1.f);
+			}
+		}
+	}
+
+	if (GEngine)
+	{
+		auto Legend = [](int32 Key, bool bEnabled, const FColor& Color, const TCHAR* Label)
+		{
+			if (bEnabled)
+			{
+				GEngine->AddOnScreenDebugMessage(Key, 0.f, Color, Label);
+			}
+		};
+
+		Legend(1710, bDrawBoidFOV,        FColor::Cyan,        TEXT("Boid FOV"));
+		Legend(1709, bDrawBoidCollision,  FColor(255, 64, 64), TEXT("Boid collision"));
+		Legend(1708, bDrawBoidSeparation, FColor::Orange,      TEXT("Boid separation"));
+		Legend(1707, bDrawBoidPerception, FColor(64, 64, 255), TEXT("Boid perception"));
+		Legend(1706, bDrawBoidForce,      FColor::Magenta,     TEXT("Boid force"));
+		Legend(1705, bDrawBoidVelocity,   FColor::White,       TEXT("Boid velocity"));
+		Legend(1704, bDrawObstacles,      FColor::Yellow,      TEXT("Obstacles"));
+		Legend(1703, bDrawBounds,         FColor::Orange,      TEXT("Bounds"));
+		Legend(1702, bDrawSpawnBounds,    FColor::Green,       TEXT("Spawn bounds"));
+		Legend(1701, bDrawGrid,           FColor::White,       TEXT("Grid (occupancy heatmap)"));
+		Legend(1700, bDrawBoids,          FColor::Cyan,        TEXT("Boids"));
 	}
 }

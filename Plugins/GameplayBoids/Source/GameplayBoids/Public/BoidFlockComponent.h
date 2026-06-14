@@ -152,6 +152,36 @@ private:
 	UPROPERTY(EditAnywhere, Category = "GameplayBoids|Debug")
 	bool bDrawObstacles = false;
 
+	// --- Per-boid debug: drawn for the first DebugSampleCount boids only (too heavy for all) ---
+
+	/** How many boids get the detailed per-boid debug below. */
+	UPROPERTY(EditAnywhere, Category = "GameplayBoids|Debug", meta = (ClampMin = "0"))
+	int32 DebugSampleCount = 8;
+
+	/** Arrow along each sampled boid's velocity. */
+	UPROPERTY(EditAnywhere, Category = "GameplayBoids|Debug")
+	bool bDrawBoidVelocity = false;
+
+	/** Arrow along each sampled boid's current steering force. */
+	UPROPERTY(EditAnywhere, Category = "GameplayBoids|Debug")
+	bool bDrawBoidForce = false;
+
+	/** Perception radius sphere around each sampled boid. */
+	UPROPERTY(EditAnywhere, Category = "GameplayBoids|Debug")
+	bool bDrawBoidPerception = false;
+
+	/** Separation radius sphere around each sampled boid. */
+	UPROPERTY(EditAnywhere, Category = "GameplayBoids|Debug")
+	bool bDrawBoidSeparation = false;
+
+	/** Field-of-view cone (along velocity, out to the perception radius) for each sampled boid. */
+	UPROPERTY(EditAnywhere, Category = "GameplayBoids|Debug")
+	bool bDrawBoidFOV = false;
+
+	/** Collision radius sphere around each sampled boid. */
+	UPROPERTY(EditAnywhere, Category = "GameplayBoids|Debug")
+	bool bDrawBoidCollision = false;
+
 	// --- Per-species renderers: one instanced-mesh component per Species entry ---
 
 	UPROPERTY(Transient)

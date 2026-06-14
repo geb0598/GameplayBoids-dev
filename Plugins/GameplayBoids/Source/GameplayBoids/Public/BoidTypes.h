@@ -61,9 +61,13 @@ struct GAMEPLAYBOIDS_API FBoidSimParams
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids|Behavior", meta = (ClampMin = "0"))
 	float PerceptionRadius = 400.f;
 
-	/** Flockmates closer than this are pushed away. */
+	/** Spacing between boids: flockmates closer than this push each other away (soft, steering only). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids|Behavior", meta = (ClampMin = "0"))
 	float SeparationRadius = 150.f;
+
+	/** Boid's own size for obstacle collision: it is kept this far from any obstacle surface (hard). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids|Behavior", meta = (ClampMin = "0"))
+	float CollisionRadius = 30.f;
 
 	/** View cone (centered on velocity); flockmates outside it are ignored. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids|Behavior", meta = (ClampMin = "0", ClampMax = "360"))
@@ -99,7 +103,8 @@ struct GAMEPLAYBOIDS_API FBoidSimParams
 UENUM()
 enum class EBoidObstacleShape : uint8
 {
-	Sphere
+	Sphere,
+	Box
 };
 
 /**
@@ -120,14 +125,56 @@ struct GAMEPLAYBOIDS_API FBoidObstacle
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids")
 	FVector3f Center = FVector3f::ZeroVector;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids", meta = (ClampMin = "0"))
+	/** Sphere radius. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids", meta = (ClampMin = "0", EditCondition = "Shape == EBoidObstacleShape::Sphere", EditConditionHides))
 	float Radius = 300.f;
+
+	/** Box half-extents. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids", meta = (EditCondition = "Shape == EBoidObstacleShape::Box", EditConditionHides))
+	FVector3f Extent = FVector3f(300.f);
+
+	/** Box orientation. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids", meta = (EditCondition = "Shape == EBoidObstacleShape::Box", EditConditionHides))
+	FRotator Rotation = FRotator::ZeroRotator;
 
 	/** Signed distance from Position to the surface (negative inside); OutNormal points outward. */
 	float SignedDistance(const FVector3f& Position, FVector3f& OutNormal) const
 	{
 		switch (Shape)
 		{
+		case EBoidObstacleShape::Box:
+		{
+			// Work in the box's local frame, then in the positive octant (abs); restore the sign at the end.
+			const FQuat Orientation = Rotation.Quaternion();
+			const FVector Local = Orientation.UnrotateVector(FVector(Position) - FVector(Center));
+			const FVector Q = Local.GetAbs() - FVector(Extent);
+
+			const FVector OutsideVec(FMath::Max(Q.X, 0.0), FMath::Max(Q.Y, 0.0), FMath::Max(Q.Z, 0.0));
+			const double Outside = OutsideVec.Size();
+			const double Inside = FMath::Min(FMath::Max3(Q.X, Q.Y, Q.Z), 0.0);
+
+			FVector LocalNormal;
+			if (Outside > UE_KINDA_SMALL_NUMBER)
+			{
+				LocalNormal = OutsideVec; // nearest surface point -> Local (face or corner)
+			}
+			else if (Q.X >= Q.Y && Q.X >= Q.Z)
+			{
+				LocalNormal = FVector(1.0, 0.0, 0.0); // inside: push out the nearest face
+			}
+			else if (Q.Y >= Q.Z)
+			{
+				LocalNormal = FVector(0.0, 1.0, 0.0);
+			}
+			else
+			{
+				LocalNormal = FVector(0.0, 0.0, 1.0);
+			}
+
+			LocalNormal *= FVector(FMath::Sign(Local.X), FMath::Sign(Local.Y), FMath::Sign(Local.Z));
+			OutNormal = FVector3f(Orientation.RotateVector(LocalNormal.GetSafeNormal()));
+			return static_cast<float>(Outside + Inside);
+		}
 		case EBoidObstacleShape::Sphere:
 		default:
 		{
@@ -144,6 +191,8 @@ struct GAMEPLAYBOIDS_API FBoidObstacle
 	{
 		switch (Shape)
 		{
+		case EBoidObstacleShape::Box:
+			return Extent.Size();
 		case EBoidObstacleShape::Sphere:
 		default:
 			return Radius;
