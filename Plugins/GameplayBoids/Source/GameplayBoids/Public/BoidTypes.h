@@ -69,6 +69,14 @@ struct GAMEPLAYBOIDS_API FBoidSimParams
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids|Behavior", meta = (ClampMin = "0"))
 	float CollisionRadius = 30.f;
 
+	/** Distance from an obstacle surface at which soft steering avoidance starts ramping up. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids|Behavior", meta = (ClampMin = "0"))
+	float AvoidDistance = 250.f;
+
+	/** Strength of the soft steering away from obstacles. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids|Behavior", meta = (ClampMin = "0"))
+	float AvoidWeight = 3.f;
+
 	/** View cone (centered on velocity); flockmates outside it are ignored. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids|Behavior", meta = (ClampMin = "0", ClampMax = "360"))
 	float FieldOfViewDegrees = 270.f;

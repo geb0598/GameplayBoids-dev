@@ -132,6 +132,9 @@ private:
 	/** Same as ResolveObstacles, for the separately-stored convex obstacles. */
 	void ResolveConvexObstacles();
 
+	/** Soft obstacle avoidance: steers boids away from nearby obstacle surfaces (added before Integrate). */
+	void ApplyAvoidance();
+
 	void UpdateRenderInstances();
 
 	void DrawDebug() const;

@@ -275,6 +275,8 @@ void UBoidFlockComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 		Forces[Index] = ComputeSteeringForce(Index);
 	});
 
+	ApplyAvoidance();
+
 	Integrate(DeltaTime);
 
 	ResolveObstacles();
@@ -541,6 +543,65 @@ void UBoidFlockComponent::ResolveConvexObstacles()
 			{
 				Velocities[Index] -= Normal * NormalVelocity;
 			}
+		});
+	}
+}
+
+void UBoidFlockComponent::ApplyAvoidance()
+{
+	if (!Grid.IsBuilt())
+	{
+		return;
+	}
+
+	// Wide enough to catch boids within their avoid distance (plus radius and one frame of motion).
+	constexpr float QueryMargin = 500.f;
+
+	for (const FBoidObstacle& Obstacle : Obstacles)
+	{
+		Grid.ForEachBoidInCellRange(Obstacle.Center, Obstacle.BoundingRadius() + QueryMargin, [&](int32 Index)
+		{
+			const FBoidSimParams& Params = ParamsFor(Index);
+
+			FVector3f Normal;
+			const float SurfaceDistance = Obstacle.SignedDistance(Positions[Index], Normal) - Params.CollisionRadius;
+			if (SurfaceDistance >= Params.AvoidDistance)
+			{
+				return;
+			}
+
+			const float Ramp = FMath::Clamp(1.f - SurfaceDistance / Params.AvoidDistance, 0.f, 1.f);
+			Forces[Index] += SteerTowards(Normal, Velocities[Index], Params) * (Ramp * Params.AvoidWeight);
+		});
+	}
+
+	for (const FBoidConvexInstance& Instance : ConvexObstacles)
+	{
+		const int32 GeoIndex = ConvexGeometrySlots.Resolve(Instance.Geometry);
+		if (GeoIndex == INDEX_NONE)
+		{
+			continue;
+		}
+
+		const FBoidConvexGeometry& Geometry = ConvexGeometries[GeoIndex];
+		const FQuat Orientation = Instance.Rotation.Quaternion();
+		const FVector Center(Instance.Center);
+
+		Grid.ForEachBoidInCellRange(Instance.Center, Geometry.BoundingRadius + QueryMargin, [&](int32 Index)
+		{
+			const FBoidSimParams& Params = ParamsFor(Index);
+			const FVector LocalPoint = Orientation.UnrotateVector(FVector(Positions[Index]) - Center);
+
+			FVector LocalNormal;
+			const float SurfaceDistance = ConvexLocalSignedDistance(Geometry, LocalPoint, LocalNormal) - Params.CollisionRadius;
+			if (SurfaceDistance >= Params.AvoidDistance)
+			{
+				return;
+			}
+
+			const FVector3f Normal = FVector3f(Orientation.RotateVector(LocalNormal.GetSafeNormal()));
+			const float Ramp = FMath::Clamp(1.f - SurfaceDistance / Params.AvoidDistance, 0.f, 1.f);
+			Forces[Index] += SteerTowards(Normal, Velocities[Index], Params) * (Ramp * Params.AvoidWeight);
 		});
 	}
 }
