@@ -246,9 +246,7 @@ FBoidHandle UBoidFlockComponent::SpawnBoid(const FVector3f& Position, const FVec
 	Velocities.Add(Velocity);
 	SpeciesIds.Add(SpeciesId);
 
-	FBoidHandle Handle;
-	BoidSlots.Add(Index, Handle.Slot, Handle.Generation);
-	return Handle;
+	return BoidSlots.Add(Index);
 }
 
 void UBoidFlockComponent::DespawnBoid(int32 Index)
@@ -275,14 +273,12 @@ void UBoidFlockComponent::DespawnBoid(int32 Index)
 
 int32 UBoidFlockComponent::ResolveHandle(const FBoidHandle& Handle) const
 {
-	return BoidSlots.Resolve(Handle.Slot, Handle.Generation);
+	return BoidSlots.Resolve(Handle);
 }
 
 FBoidHandle UBoidFlockComponent::MakeHandle(int32 Index) const
 {
-	FBoidHandle Handle;
-	BoidSlots.TryGetSlot(Index, Handle.Slot, Handle.Generation);
-	return Handle;
+	return BoidSlots.MakeHandle(Index);
 }
 
 void UBoidFlockComponent::AddRadialImpulse(const FVector& Center, float Radius, float Impulse)
@@ -325,15 +321,12 @@ void UBoidFlockComponent::AddRadialImpulse(const FVector& Center, float Radius, 
 FBoidObstacleHandle UBoidFlockComponent::AddObstacle(const FBoidObstacle& Obstacle)
 {
 	const int32 Index = Obstacles.Add(Obstacle);
-
-	FBoidObstacleHandle Handle;
-	ObstacleSlots.Add(Index, Handle.Slot, Handle.Generation);
-	return Handle;
+	return ObstacleSlots.Add(Index);
 }
 
 void UBoidFlockComponent::UpdateObstacle(const FBoidObstacleHandle& Handle, const FBoidObstacle& Obstacle)
 {
-	const int32 Index = ObstacleSlots.Resolve(Handle.Slot, Handle.Generation);
+	const int32 Index = ObstacleSlots.Resolve(Handle);
 	if (Index != INDEX_NONE)
 	{
 		Obstacles[Index] = Obstacle;
@@ -342,7 +335,7 @@ void UBoidFlockComponent::UpdateObstacle(const FBoidObstacleHandle& Handle, cons
 
 void UBoidFlockComponent::RemoveObstacle(const FBoidObstacleHandle& Handle)
 {
-	const int32 Index = ObstacleSlots.Resolve(Handle.Slot, Handle.Generation);
+	const int32 Index = ObstacleSlots.Resolve(Handle);
 	if (Index == INDEX_NONE)
 	{
 		return;

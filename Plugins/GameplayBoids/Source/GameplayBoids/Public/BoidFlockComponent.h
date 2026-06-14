@@ -203,12 +203,12 @@ private:
 	TArray<FVector3f> Forces;
 
 	/** Stable handles over the swap-removed boid arrays. */
-	FBoidSlotMap BoidSlots;
+	TBoidSlotMap<FBoidHandle> BoidSlots;
 
 	// --- Registered obstacles (dense) ---
 
 	TArray<FBoidObstacle> Obstacles;
 
 	/** Stable handles over the swap-removed obstacle array. */
-	FBoidSlotMap ObstacleSlots;
+	TBoidSlotMap<FBoidObstacleHandle> ObstacleSlots;
 };

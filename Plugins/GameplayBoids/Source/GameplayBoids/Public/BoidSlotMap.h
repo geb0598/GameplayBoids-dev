@@ -9,11 +9,14 @@
  * Stores only the indirection (slot <-> dense index, reuse generations, free list), never the
  * data. On removal the owner swap-removes its own arrays and passes the indices here so the
  * moved element's mapping stays in sync.
+ *
+ * HandleType must have int32 Slot and uint32 Generation members and default to an unset slot.
  */
-struct FBoidSlotMap
+template <typename HandleType>
+struct TBoidSlotMap
 {
-	/** Registers an element just appended at DenseIndex; writes its stable slot and generation. */
-	void Add(int32 DenseIndex, int32& OutSlot, uint32& OutGeneration)
+	/** Registers an element just appended at DenseIndex and returns a stable handle to it. */
+	HandleType Add(int32 DenseIndex)
 	{
 		int32 Slot;
 		if (FreeSlots.Num() > 0)
@@ -28,8 +31,10 @@ struct FBoidSlotMap
 		}
 		IndexToSlot.Add(Slot);
 
-		OutSlot = Slot;
-		OutGeneration = SlotGeneration[Slot];
+		HandleType Handle;
+		Handle.Slot = Slot;
+		Handle.Generation = SlotGeneration[Slot];
+		return Handle;
 	}
 
 	/** Mirrors a swap-remove of the dense array: the owner moved LastIndex into DenseIndex. */
@@ -51,25 +56,25 @@ struct FBoidSlotMap
 	}
 
 	/** Current dense index for a handle, or INDEX_NONE if it is stale. */
-	int32 Resolve(int32 Slot, uint32 Generation) const
+	int32 Resolve(const HandleType& Handle) const
 	{
-		if (Slot != INDEX_NONE && SlotGeneration.IsValidIndex(Slot) && SlotGeneration[Slot] == Generation)
+		if (Handle.Slot != INDEX_NONE && SlotGeneration.IsValidIndex(Handle.Slot) && SlotGeneration[Handle.Slot] == Handle.Generation)
 		{
-			return SlotToIndex[Slot];
+			return SlotToIndex[Handle.Slot];
 		}
 		return INDEX_NONE;
 	}
 
-	/** Slot and generation of the element at DenseIndex (to build a handle); false if out of range. */
-	bool TryGetSlot(int32 DenseIndex, int32& OutSlot, uint32& OutGeneration) const
+	/** Handle for the element currently at DenseIndex; an unset handle if out of range. */
+	HandleType MakeHandle(int32 DenseIndex) const
 	{
+		HandleType Handle;
 		if (IndexToSlot.IsValidIndex(DenseIndex))
 		{
-			OutSlot = IndexToSlot[DenseIndex];
-			OutGeneration = SlotGeneration[OutSlot];
-			return true;
+			Handle.Slot = IndexToSlot[DenseIndex];
+			Handle.Generation = SlotGeneration[Handle.Slot];
 		}
-		return false;
+		return Handle;
 	}
 
 	void Reserve(int32 Count)
