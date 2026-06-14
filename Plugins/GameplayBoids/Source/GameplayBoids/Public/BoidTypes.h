@@ -95,3 +95,78 @@ struct GAMEPLAYBOIDS_API FBoidSimParams
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids|Bounds", meta = (ClampMin = "1"))
 	float BoundsMargin = 300.f;
 };
+
+UENUM()
+enum class EBoidObstacleShape : uint8
+{
+	Sphere
+};
+
+/**
+ * @brief A convex obstacle boids are kept from penetrating, as a tagged shape.
+ *
+ * Boids never trace against meshes; instead each obstacle answers SignedDistance(P), and the
+ * flock pushes any boid found inside back out to the surface.
+ */
+USTRUCT(BlueprintType)
+struct GAMEPLAYBOIDS_API FBoidObstacle
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids")
+	EBoidObstacleShape Shape = EBoidObstacleShape::Sphere;
+
+	/** World-space center. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids")
+	FVector3f Center = FVector3f::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids", meta = (ClampMin = "0"))
+	float Radius = 300.f;
+
+	/** Signed distance from Position to the surface (negative inside); OutNormal points outward. */
+	float SignedDistance(const FVector3f& Position, FVector3f& OutNormal) const
+	{
+		switch (Shape)
+		{
+		case EBoidObstacleShape::Sphere:
+		default:
+		{
+			const FVector3f Offset = Position - Center;
+			const float Distance = Offset.Size();
+			OutNormal = Distance > UE_KINDA_SMALL_NUMBER ? Offset / Distance : FVector3f::UpVector;
+			return Distance - Radius;
+		}
+		}
+	}
+
+	/** Radius of a sphere bounding this obstacle, used to size the grid query. */
+	float BoundingRadius() const
+	{
+		switch (Shape)
+		{
+		case EBoidObstacleShape::Sphere:
+		default:
+			return Radius;
+		}
+	}
+};
+
+/**
+ * @brief Stable external reference to a registered obstacle (slot map handle).
+ *
+ * Gameplay holds this to update or remove a runtime obstacle (e.g. a wall that grows then
+ * expires), since the dense obstacle array shifts on swap-remove.
+ */
+USTRUCT(BlueprintType)
+struct GAMEPLAYBOIDS_API FBoidObstacleHandle
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	int32 Slot = INDEX_NONE;
+
+	UPROPERTY()
+	uint32 Generation = 0;
+
+	FORCEINLINE bool IsSet() const { return Slot != INDEX_NONE; }
+};

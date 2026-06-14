@@ -53,6 +53,64 @@ static FAutoConsoleCommandWithWorldAndArgs GBoidExplodeCommand(
 	TEXT("Explode (radial impulse) 1500u in front of the camera. Args: [impulse=2000] [radius=800]. Negative implodes."),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BoidExplodeCommand));
 
+// Test helper: add a sphere obstacle in front of the camera to every flock.
+static void BoidAddObstacleCommand(const TArray<FString>& Args, UWorld* World)
+{
+	if (!World)
+	{
+		return;
+	}
+
+	APlayerController* PlayerController = World->GetFirstPlayerController();
+	if (!PlayerController)
+	{
+		return;
+	}
+
+	FVector ViewLocation;
+	FRotator ViewRotation;
+	PlayerController->GetPlayerViewPoint(ViewLocation, ViewRotation);
+
+	FBoidObstacle Obstacle;
+	Obstacle.Shape = EBoidObstacleShape::Sphere;
+	Obstacle.Center = FVector3f(ViewLocation + ViewRotation.Vector() * 1500.f);
+	Obstacle.Radius = Args.Num() > 0 ? FCString::Atof(*Args[0]) : 500.f;
+
+	for (TObjectIterator<UBoidFlockComponent> It; It; ++It)
+	{
+		if (It->GetWorld() == World)
+		{
+			It->AddObstacle(Obstacle);
+		}
+	}
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GBoidAddObstacleCommand(
+	TEXT("GameplayBoids.AddObstacle"),
+	TEXT("Add a sphere obstacle 1500u in front of the camera. Args: [radius=500]."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BoidAddObstacleCommand));
+
+static void BoidClearObstaclesCommand(const TArray<FString>& Args, UWorld* World)
+{
+	if (!World)
+	{
+		return;
+	}
+
+	for (TObjectIterator<UBoidFlockComponent> It; It; ++It)
+	{
+		if (It->GetWorld() == World)
+		{
+			It->ClearObstacles();
+		}
+	}
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GBoidClearObstaclesCommand(
+	TEXT("GameplayBoids.ClearObstacles"),
+	TEXT("Remove all obstacles from every flock."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BoidClearObstaclesCommand));
+
 UBoidFlockComponent::UBoidFlockComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
@@ -64,6 +122,11 @@ void UBoidFlockComponent::BeginPlay()
 
 	CreateSpeciesRenderers();
 	SpawnInitialBoids();
+
+	for (const FBoidObstacle& Obstacle : InitialObstacles)
+	{
+		AddObstacle(Obstacle);
+	}
 }
 
 void UBoidFlockComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -86,6 +149,8 @@ void UBoidFlockComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 	});
 
 	Integrate(DeltaTime);
+
+	ResolveObstacles();
 
 	UpdateRenderInstances();
 
@@ -205,6 +270,105 @@ void UBoidFlockComponent::AddRadialImpulse(const FVector& Center, float Radius, 
 		}
 	}
 #endif
+}
+
+FBoidObstacleHandle UBoidFlockComponent::AddObstacle(const FBoidObstacle& Obstacle)
+{
+	const int32 Index = Obstacles.Add(Obstacle);
+
+	int32 Slot;
+	if (ObstacleFreeSlots.Num() > 0)
+	{
+		Slot = ObstacleFreeSlots.Pop(EAllowShrinking::No);
+		ObstacleSlotToIndex[Slot] = Index;
+	}
+	else
+	{
+		Slot = ObstacleSlotToIndex.Add(Index);
+		ObstacleSlotGeneration.Add(0);
+	}
+	ObstacleIndexToSlot.Add(Slot);
+
+	FBoidObstacleHandle Handle;
+	Handle.Slot = Slot;
+	Handle.Generation = ObstacleSlotGeneration[Slot];
+	return Handle;
+}
+
+void UBoidFlockComponent::UpdateObstacle(const FBoidObstacleHandle& Handle, const FBoidObstacle& Obstacle)
+{
+	if (Handle.IsSet() && ObstacleSlotGeneration.IsValidIndex(Handle.Slot) && ObstacleSlotGeneration[Handle.Slot] == Handle.Generation)
+	{
+		Obstacles[ObstacleSlotToIndex[Handle.Slot]] = Obstacle;
+	}
+}
+
+void UBoidFlockComponent::RemoveObstacle(const FBoidObstacleHandle& Handle)
+{
+	if (!Handle.IsSet() || !ObstacleSlotGeneration.IsValidIndex(Handle.Slot) || ObstacleSlotGeneration[Handle.Slot] != Handle.Generation)
+	{
+		return;
+	}
+
+	const int32 Index = ObstacleSlotToIndex[Handle.Slot];
+	++ObstacleSlotGeneration[Handle.Slot];
+	ObstacleSlotToIndex[Handle.Slot] = INDEX_NONE;
+	ObstacleFreeSlots.Add(Handle.Slot);
+
+	const int32 Last = Obstacles.Num() - 1;
+	if (Index != Last)
+	{
+		Obstacles[Index] = Obstacles[Last];
+
+		const int32 MovedSlot = ObstacleIndexToSlot[Last];
+		ObstacleIndexToSlot[Index] = MovedSlot;
+		ObstacleSlotToIndex[MovedSlot] = Index;
+	}
+
+	Obstacles.Pop(EAllowShrinking::No);
+	ObstacleIndexToSlot.Pop(EAllowShrinking::No);
+}
+
+void UBoidFlockComponent::ClearObstacles()
+{
+	Obstacles.Reset();
+	ObstacleSlotToIndex.Reset();
+	ObstacleSlotGeneration.Reset();
+	ObstacleIndexToSlot.Reset();
+	ObstacleFreeSlots.Reset();
+}
+
+void UBoidFlockComponent::ResolveObstacles()
+{
+	if (!Grid.IsBuilt())
+	{
+		return;
+	}
+
+	// The grid was built from pre-Integrate positions, so query a bit wider than the obstacle
+	// to still catch boids that moved into it this frame.
+	constexpr float QueryMargin = 200.f;
+
+	for (const FBoidObstacle& Obstacle : Obstacles)
+	{
+		Grid.ForEachBoidInCellRange(Obstacle.Center, Obstacle.BoundingRadius() + QueryMargin, [&](int32 Index)
+		{
+			FVector3f Normal;
+			const float Distance = Obstacle.SignedDistance(Positions[Index], Normal);
+			if (Distance >= 0.f)
+			{
+				return;
+			}
+
+			Positions[Index] -= Normal * Distance;
+
+			const float NormalVelocity = Velocities[Index] | Normal;
+			if (NormalVelocity < 0.f)
+			{
+				Velocities[Index] -= Normal * NormalVelocity;
+			}
+		});
+	}
 }
 
 void UBoidFlockComponent::CreateSpeciesRenderers()
@@ -515,5 +679,13 @@ void UBoidFlockComponent::DrawDebug() const
 	if (bDrawBounds)
 	{
 		DrawDebugBox(World, Center, FVector(SpawnExtent), FColor::Orange, false, -1.f, 0, 2.f);
+	}
+
+	if (bDrawObstacles)
+	{
+		for (const FBoidObstacle& Obstacle : Obstacles)
+		{
+			DrawDebugSphere(World, FVector(Obstacle.Center), Obstacle.BoundingRadius(), 16, FColor::Yellow, false, -1.f);
+		}
 	}
 }

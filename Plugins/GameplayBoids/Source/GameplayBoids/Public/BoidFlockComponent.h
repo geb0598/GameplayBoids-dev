@@ -73,6 +73,22 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "GameplayBoids")
 	void AddRadialImpulse(const FVector& Center, float Radius, float Impulse);
 
+	/** Registers an obstacle boids will be kept out of; returns a handle to update or remove it. */
+	UFUNCTION(BlueprintCallable, Category = "GameplayBoids")
+	FBoidObstacleHandle AddObstacle(const FBoidObstacle& Obstacle);
+
+	/** Replaces a registered obstacle's data (e.g. a wall that grows out of the floor). */
+	UFUNCTION(BlueprintCallable, Category = "GameplayBoids")
+	void UpdateObstacle(const FBoidObstacleHandle& Handle, const FBoidObstacle& Obstacle);
+
+	/** Unregisters an obstacle; its handle becomes stale. */
+	UFUNCTION(BlueprintCallable, Category = "GameplayBoids")
+	void RemoveObstacle(const FBoidObstacleHandle& Handle);
+
+	/** Removes every registered obstacle. */
+	UFUNCTION(BlueprintCallable, Category = "GameplayBoids")
+	void ClearObstacles();
+
 private:
 	void CreateSpeciesRenderers();
 
@@ -88,6 +104,9 @@ private:
 	FVector3f ComputeSteeringForce(int32 Index) const;
 
 	void Integrate(float DeltaTime);
+
+	/** Pushes any boid found inside a registered obstacle back out to its surface (slides along it). */
+	void ResolveObstacles();
 
 	void UpdateRenderInstances();
 
@@ -106,6 +125,10 @@ private:
 	UPROPERTY(EditAnywhere, Category = "GameplayBoids")
 	FVector3f SpawnExtent = FVector3f(1500.f);
 
+	/** Obstacles registered at BeginPlay (static level geometry); runtime ones use AddObstacle. */
+	UPROPERTY(EditAnywhere, Category = "GameplayBoids")
+	TArray<FBoidObstacle> InitialObstacles;
+
 	// --- Debug draw (only while the GameplayBoids.DrawDebug CVar is on) ---
 
 	/** Draw a point at each boid. */
@@ -123,6 +146,10 @@ private:
 	/** Draw the soft-bounds volume boids are kept within. */
 	UPROPERTY(EditAnywhere, Category = "GameplayBoids|Debug")
 	bool bDrawBounds = false;
+
+	/** Draw registered obstacles. */
+	UPROPERTY(EditAnywhere, Category = "GameplayBoids|Debug")
+	bool bDrawObstacles = false;
 
 	// --- Per-species renderers: one instanced-mesh component per Species entry ---
 
@@ -157,4 +184,16 @@ private:
 
 	/** Slots whose boids died, waiting to be reused. */
 	TArray<int32> FreeSlots;
+
+	// --- Registered obstacles (dense) with their own slot map for stable handles ---
+
+	TArray<FBoidObstacle> Obstacles;
+
+	TArray<int32> ObstacleSlotToIndex;
+
+	TArray<uint32> ObstacleSlotGeneration;
+
+	TArray<int32> ObstacleIndexToSlot;
+
+	TArray<int32> ObstacleFreeSlots;
 };
