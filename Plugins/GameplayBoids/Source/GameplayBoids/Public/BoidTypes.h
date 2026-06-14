@@ -239,3 +239,70 @@ struct GAMEPLAYBOIDS_API FBoidObstacleHandle
 
 	FORCEINLINE bool IsSet() const { return Slot != INDEX_NONE; }
 };
+
+/**
+ * @brief Shared convex shape: face planes in local space, registered once per mesh and pointed at
+ * by many instances.
+ *
+ * A point is inside when it is behind every face plane. Gameplay builds this from a mesh's convex
+ * collision; the plugin only stores and evaluates it.
+ */
+USTRUCT(BlueprintType)
+struct GAMEPLAYBOIDS_API FBoidConvexGeometry
+{
+	GENERATED_BODY()
+
+	/** Face planes (local space): xyz = outward unit normal, w = offset, so a face's signed distance is dot(N, P) - W. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids")
+	TArray<FVector4f> Planes;
+
+	/** Distance from the local origin to the farthest point, used to size the grid query. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids", meta = (ClampMin = "0"))
+	float BoundingRadius = 0.f;
+};
+
+/** Stable handle to a registered FBoidConvexGeometry (shape), shared across instances. */
+USTRUCT(BlueprintType)
+struct GAMEPLAYBOIDS_API FBoidConvexGeometryHandle
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	int32 Slot = INDEX_NONE;
+
+	UPROPERTY()
+	uint32 Generation = 0;
+
+	FORCEINLINE bool IsSet() const { return Slot != INDEX_NONE; }
+};
+
+/** A placed convex obstacle: which geometry to use, plus its world transform. */
+USTRUCT(BlueprintType)
+struct GAMEPLAYBOIDS_API FBoidConvexInstance
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids")
+	FBoidConvexGeometryHandle Geometry;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids")
+	FVector3f Center = FVector3f::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids")
+	FRotator Rotation = FRotator::ZeroRotator;
+};
+
+/** Stable handle to a placed convex obstacle instance. */
+USTRUCT(BlueprintType)
+struct GAMEPLAYBOIDS_API FBoidConvexHandle
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	int32 Slot = INDEX_NONE;
+
+	UPROPERTY()
+	uint32 Generation = 0;
+
+	FORCEINLINE bool IsSet() const { return Slot != INDEX_NONE; }
+};

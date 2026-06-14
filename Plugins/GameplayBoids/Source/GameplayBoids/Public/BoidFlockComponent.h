@@ -90,6 +90,26 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "GameplayBoids")
 	void ClearObstacles();
 
+	/** Registers a shared convex shape (e.g. built from a mesh's convex collision); returns a handle to reference it. */
+	UFUNCTION(BlueprintCallable, Category = "GameplayBoids")
+	FBoidConvexGeometryHandle RegisterConvexGeometry(const FBoidConvexGeometry& Geometry);
+
+	/** Unregisters a convex shape; instances still pointing at it stop colliding. */
+	UFUNCTION(BlueprintCallable, Category = "GameplayBoids")
+	void UnregisterConvexGeometry(const FBoidConvexGeometryHandle& Geometry);
+
+	/** Places a convex obstacle using a registered shape; returns a handle to update or remove it. */
+	UFUNCTION(BlueprintCallable, Category = "GameplayBoids")
+	FBoidConvexHandle AddConvexObstacle(const FBoidConvexGeometryHandle& Geometry, const FVector& Center, const FRotator& Rotation);
+
+	/** Moves a placed convex obstacle. */
+	UFUNCTION(BlueprintCallable, Category = "GameplayBoids")
+	void UpdateConvexObstacle(const FBoidConvexHandle& Handle, const FVector& Center, const FRotator& Rotation);
+
+	/** Removes a placed convex obstacle; its handle becomes stale. */
+	UFUNCTION(BlueprintCallable, Category = "GameplayBoids")
+	void RemoveConvexObstacle(const FBoidConvexHandle& Handle);
+
 private:
 	void CreateSpeciesRenderers();
 
@@ -108,6 +128,9 @@ private:
 
 	/** Pushes any boid found inside a registered obstacle back out to its surface (slides along it). */
 	void ResolveObstacles();
+
+	/** Same as ResolveObstacles, for the separately-stored convex obstacles. */
+	void ResolveConvexObstacles();
 
 	void UpdateRenderInstances();
 
@@ -211,4 +234,15 @@ private:
 
 	/** Stable handles over the swap-removed obstacle array. */
 	TBoidSlotMap<FBoidObstacleHandle> ObstacleSlots;
+
+	// --- Convex obstacles: shared shapes (geometry pool) + placed instances, kept apart from the
+	//     primitive obstacles since their planes are an indirection that defeats dense iteration ---
+
+	TArray<FBoidConvexGeometry> ConvexGeometries;
+
+	TBoidSlotMap<FBoidConvexGeometryHandle> ConvexGeometrySlots;
+
+	TArray<FBoidConvexInstance> ConvexObstacles;
+
+	TBoidSlotMap<FBoidConvexHandle> ConvexSlots;
 };

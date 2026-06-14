@@ -170,6 +170,53 @@ static FAutoConsoleCommandWithWorldAndArgs GBoidAddCapsuleCommand(
 	TEXT("Add a vertical capsule pillar in front of the camera. Args: [radius=200] [halfHeight=400]."),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BoidAddCapsuleCommand));
 
+// Test helper: register a box-shaped convex hull and place an instance in front of the camera.
+static void BoidAddConvexCommand(const TArray<FString>& Args, UWorld* World)
+{
+	if (!World)
+	{
+		return;
+	}
+
+	APlayerController* PlayerController = World->GetFirstPlayerController();
+	if (!PlayerController)
+	{
+		return;
+	}
+
+	FVector ViewLocation;
+	FRotator ViewRotation;
+	PlayerController->GetPlayerViewPoint(ViewLocation, ViewRotation);
+
+	const float HalfSize = Args.Num() > 0 ? FCString::Atof(*Args[0]) : 400.f;
+
+	// A box-shaped convex hull (6 axis-aligned face planes) standing in for a real mesh's collision.
+	FBoidConvexGeometry Geometry;
+	Geometry.Planes = {
+		FVector4f(1.f, 0.f, 0.f, HalfSize), FVector4f(-1.f, 0.f, 0.f, HalfSize),
+		FVector4f(0.f, 1.f, 0.f, HalfSize), FVector4f(0.f, -1.f, 0.f, HalfSize),
+		FVector4f(0.f, 0.f, 1.f, HalfSize), FVector4f(0.f, 0.f, -1.f, HalfSize)
+	};
+	Geometry.BoundingRadius = HalfSize * FMath::Sqrt(3.f);
+
+	const FVector Center = ViewLocation + ViewRotation.Vector() * 1500.f;
+	const FRotator Rotation(0.f, ViewRotation.Yaw, 0.f);
+
+	for (TObjectIterator<UBoidFlockComponent> It; It; ++It)
+	{
+		if (It->GetWorld() == World)
+		{
+			const FBoidConvexGeometryHandle GeometryHandle = It->RegisterConvexGeometry(Geometry);
+			It->AddConvexObstacle(GeometryHandle, Center, Rotation);
+		}
+	}
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GBoidAddConvexCommand(
+	TEXT("GameplayBoids.AddConvex"),
+	TEXT("Add a box-shaped convex obstacle facing the camera (for testing). Args: [halfSize=400]."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BoidAddConvexCommand));
+
 static void BoidClearObstaclesCommand(const TArray<FString>& Args, UWorld* World)
 {
 	if (!World)
@@ -231,6 +278,7 @@ void UBoidFlockComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 	Integrate(DeltaTime);
 
 	ResolveObstacles();
+	ResolveConvexObstacles();
 
 	UpdateRenderInstances();
 
@@ -356,6 +404,145 @@ void UBoidFlockComponent::ClearObstacles()
 {
 	Obstacles.Reset();
 	ObstacleSlots.Reset();
+
+	ConvexObstacles.Reset();
+	ConvexSlots.Reset();
+	ConvexGeometries.Reset();
+	ConvexGeometrySlots.Reset();
+}
+
+FBoidConvexGeometryHandle UBoidFlockComponent::RegisterConvexGeometry(const FBoidConvexGeometry& Geometry)
+{
+	const int32 Index = ConvexGeometries.Add(Geometry);
+	return ConvexGeometrySlots.Add(Index);
+}
+
+void UBoidFlockComponent::UnregisterConvexGeometry(const FBoidConvexGeometryHandle& Geometry)
+{
+	const int32 Index = ConvexGeometrySlots.Resolve(Geometry);
+	if (Index == INDEX_NONE)
+	{
+		return;
+	}
+
+	const int32 Last = ConvexGeometries.Num() - 1;
+	ConvexGeometrySlots.RemoveAt(Index, Last);
+
+	if (Index != Last)
+	{
+		ConvexGeometries[Index] = ConvexGeometries[Last];
+	}
+
+	ConvexGeometries.Pop(EAllowShrinking::No);
+}
+
+FBoidConvexHandle UBoidFlockComponent::AddConvexObstacle(const FBoidConvexGeometryHandle& Geometry, const FVector& Center, const FRotator& Rotation)
+{
+	FBoidConvexInstance Instance;
+	Instance.Geometry = Geometry;
+	Instance.Center = FVector3f(Center);
+	Instance.Rotation = Rotation;
+
+	const int32 Index = ConvexObstacles.Add(Instance);
+	return ConvexSlots.Add(Index);
+}
+
+void UBoidFlockComponent::UpdateConvexObstacle(const FBoidConvexHandle& Handle, const FVector& Center, const FRotator& Rotation)
+{
+	const int32 Index = ConvexSlots.Resolve(Handle);
+	if (Index != INDEX_NONE)
+	{
+		ConvexObstacles[Index].Center = FVector3f(Center);
+		ConvexObstacles[Index].Rotation = Rotation;
+	}
+}
+
+void UBoidFlockComponent::RemoveConvexObstacle(const FBoidConvexHandle& Handle)
+{
+	const int32 Index = ConvexSlots.Resolve(Handle);
+	if (Index == INDEX_NONE)
+	{
+		return;
+	}
+
+	const int32 Last = ConvexObstacles.Num() - 1;
+	ConvexSlots.RemoveAt(Index, Last);
+
+	if (Index != Last)
+	{
+		ConvexObstacles[Index] = ConvexObstacles[Last];
+	}
+
+	ConvexObstacles.Pop(EAllowShrinking::No);
+}
+
+static float ConvexLocalSignedDistance(const FBoidConvexGeometry& Geometry, const FVector& LocalPoint, FVector& OutLocalNormal)
+{
+	OutLocalNormal = FVector::UpVector;
+	if (Geometry.Planes.Num() == 0)
+	{
+		return TNumericLimits<float>::Max();
+	}
+
+	double MaxSD = -TNumericLimits<double>::Max();
+	for (const FVector4f& Plane : Geometry.Planes)
+	{
+		const FVector Normal(Plane.X, Plane.Y, Plane.Z);
+		const double SD = FVector::DotProduct(Normal, LocalPoint) - Plane.W;
+		if (SD > MaxSD)
+		{
+			MaxSD = SD;
+			OutLocalNormal = Normal;
+		}
+	}
+	return static_cast<float>(MaxSD);
+}
+
+void UBoidFlockComponent::ResolveConvexObstacles()
+{
+	if (!Grid.IsBuilt())
+	{
+		return;
+	}
+
+	// The grid was built from pre-Integrate positions, so query a bit wider than the obstacle
+	// to still catch boids that moved into it this frame.
+	constexpr float QueryMargin = 200.f;
+
+	for (const FBoidConvexInstance& Instance : ConvexObstacles)
+	{
+		const int32 GeoIndex = ConvexGeometrySlots.Resolve(Instance.Geometry);
+		if (GeoIndex == INDEX_NONE)
+		{
+			continue;
+		}
+
+		const FBoidConvexGeometry& Geometry = ConvexGeometries[GeoIndex];
+		const FQuat Orientation = Instance.Rotation.Quaternion();
+		const FVector Center(Instance.Center);
+
+		Grid.ForEachBoidInCellRange(Instance.Center, Geometry.BoundingRadius + QueryMargin, [&](int32 Index)
+		{
+			const float BoidRadius = ParamsFor(Index).CollisionRadius;
+			const FVector LocalPoint = Orientation.UnrotateVector(FVector(Positions[Index]) - Center);
+
+			FVector LocalNormal;
+			const float Distance = ConvexLocalSignedDistance(Geometry, LocalPoint, LocalNormal);
+			if (Distance >= BoidRadius)
+			{
+				return;
+			}
+
+			const FVector3f Normal = FVector3f(Orientation.RotateVector(LocalNormal.GetSafeNormal()));
+			Positions[Index] += Normal * (BoidRadius - Distance);
+
+			const float NormalVelocity = Velocities[Index] | Normal;
+			if (NormalVelocity < 0.f)
+			{
+				Velocities[Index] -= Normal * NormalVelocity;
+			}
+		});
+	}
 }
 
 void UBoidFlockComponent::ResolveObstacles()
@@ -373,7 +560,6 @@ void UBoidFlockComponent::ResolveObstacles()
 	{
 		Grid.ForEachBoidInCellRange(Obstacle.Center, Obstacle.BoundingRadius() + QueryMargin, [&](int32 Index)
 		{
-			// Treat the boid as a sphere: its surface touches once the center is within CollisionRadius.
 			const float BoidRadius = ParamsFor(Index).CollisionRadius;
 
 			FVector3f Normal;
@@ -718,6 +904,14 @@ void UBoidFlockComponent::DrawDebug() const
 			{
 				DrawDebugSphere(World, FVector(Obstacle.Center), Obstacle.Radius, 16, FColor::Yellow, false, -1.f);
 			}
+		}
+
+		// Convex hulls aren't drawn exactly (only planes are stored); show the bounding sphere.
+		for (const FBoidConvexInstance& Instance : ConvexObstacles)
+		{
+			const int32 GeoIndex = ConvexGeometrySlots.Resolve(Instance.Geometry);
+			const float Radius = GeoIndex != INDEX_NONE ? ConvexGeometries[GeoIndex].BoundingRadius : 50.f;
+			DrawDebugSphere(World, FVector(Instance.Center), Radius, 12, FColor::Purple, false, -1.f);
 		}
 	}
 
