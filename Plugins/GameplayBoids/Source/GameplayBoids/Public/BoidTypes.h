@@ -104,7 +104,8 @@ UENUM()
 enum class EBoidObstacleShape : uint8
 {
 	Sphere,
-	Box
+	Box,
+	Capsule
 };
 
 /**
@@ -125,16 +126,20 @@ struct GAMEPLAYBOIDS_API FBoidObstacle
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids")
 	FVector3f Center = FVector3f::ZeroVector;
 
-	/** Sphere radius. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids", meta = (ClampMin = "0", EditCondition = "Shape == EBoidObstacleShape::Sphere", EditConditionHides))
+	/** Radius of the sphere, or of the capsule's tube. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids", meta = (ClampMin = "0", EditCondition = "Shape == EBoidObstacleShape::Sphere || Shape == EBoidObstacleShape::Capsule", EditConditionHides))
 	float Radius = 300.f;
 
 	/** Box half-extents. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids", meta = (EditCondition = "Shape == EBoidObstacleShape::Box", EditConditionHides))
 	FVector3f Extent = FVector3f(300.f);
 
-	/** Box orientation. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids", meta = (EditCondition = "Shape == EBoidObstacleShape::Box", EditConditionHides))
+	/** Capsule: half-length of the central segment (between the two hemisphere centers), along local Z. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids", meta = (ClampMin = "0", EditCondition = "Shape == EBoidObstacleShape::Capsule", EditConditionHides))
+	float HalfHeight = 300.f;
+
+	/** Orientation of the box or capsule. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameplayBoids", meta = (EditCondition = "Shape == EBoidObstacleShape::Box || Shape == EBoidObstacleShape::Capsule", EditConditionHides))
 	FRotator Rotation = FRotator::ZeroRotator;
 
 	/** Signed distance from Position to the surface (negative inside); OutNormal points outward. */
@@ -175,6 +180,19 @@ struct GAMEPLAYBOIDS_API FBoidObstacle
 			OutNormal = FVector3f(Orientation.RotateVector(LocalNormal.GetSafeNormal()));
 			return static_cast<float>(Outside + Inside);
 		}
+		case EBoidObstacleShape::Capsule:
+		{
+			// Distance to the central segment (local Z, ±HalfHeight) minus the tube radius.
+			const FQuat Orientation = Rotation.Quaternion();
+			const FVector Local = Orientation.UnrotateVector(FVector(Position) - FVector(Center));
+
+			const double ClampedZ = FMath::Clamp(Local.Z, -static_cast<double>(HalfHeight), static_cast<double>(HalfHeight));
+			const FVector ToSurface = Local - FVector(0.0, 0.0, ClampedZ);
+			const double Distance = ToSurface.Size();
+
+			OutNormal = FVector3f(Orientation.RotateVector(Distance > UE_KINDA_SMALL_NUMBER ? ToSurface / Distance : FVector::UpVector));
+			return static_cast<float>(Distance - Radius);
+		}
 		case EBoidObstacleShape::Sphere:
 		default:
 		{
@@ -193,6 +211,8 @@ struct GAMEPLAYBOIDS_API FBoidObstacle
 		{
 		case EBoidObstacleShape::Box:
 			return Extent.Size();
+		case EBoidObstacleShape::Capsule:
+			return HalfHeight + Radius;
 		case EBoidObstacleShape::Sphere:
 		default:
 			return Radius;

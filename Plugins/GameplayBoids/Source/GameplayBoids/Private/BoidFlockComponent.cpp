@@ -131,6 +131,45 @@ static FAutoConsoleCommandWithWorldAndArgs GBoidAddBoxCommand(
 	TEXT("Add a thin box wall facing the camera. Args: [halfSize=500]."),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BoidAddBoxCommand));
 
+// Test helper: add a vertical capsule pillar in front of the camera to every flock.
+static void BoidAddCapsuleCommand(const TArray<FString>& Args, UWorld* World)
+{
+	if (!World)
+	{
+		return;
+	}
+
+	APlayerController* PlayerController = World->GetFirstPlayerController();
+	if (!PlayerController)
+	{
+		return;
+	}
+
+	FVector ViewLocation;
+	FRotator ViewRotation;
+	PlayerController->GetPlayerViewPoint(ViewLocation, ViewRotation);
+
+	FBoidObstacle Obstacle;
+	Obstacle.Shape = EBoidObstacleShape::Capsule;
+	Obstacle.Center = FVector3f(ViewLocation + ViewRotation.Vector() * 1500.f);
+	Obstacle.Radius = Args.Num() > 0 ? FCString::Atof(*Args[0]) : 200.f;
+	Obstacle.HalfHeight = Args.Num() > 1 ? FCString::Atof(*Args[1]) : 400.f;
+	Obstacle.Rotation = FRotator::ZeroRotator;   // vertical pillar
+
+	for (TObjectIterator<UBoidFlockComponent> It; It; ++It)
+	{
+		if (It->GetWorld() == World)
+		{
+			It->AddObstacle(Obstacle);
+		}
+	}
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GBoidAddCapsuleCommand(
+	TEXT("GameplayBoids.AddCapsule"),
+	TEXT("Add a vertical capsule pillar in front of the camera. Args: [radius=200] [halfHeight=400]."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BoidAddCapsuleCommand));
+
 static void BoidClearObstaclesCommand(const TArray<FString>& Args, UWorld* World)
 {
 	if (!World)
@@ -677,6 +716,10 @@ void UBoidFlockComponent::DrawDebug() const
 			if (Obstacle.Shape == EBoidObstacleShape::Box)
 			{
 				DrawDebugBox(World, FVector(Obstacle.Center), FVector(Obstacle.Extent), Obstacle.Rotation.Quaternion(), FColor::Yellow, false, -1.f);
+			}
+			else if (Obstacle.Shape == EBoidObstacleShape::Capsule)
+			{
+				DrawDebugCapsule(World, FVector(Obstacle.Center), Obstacle.HalfHeight + Obstacle.Radius, Obstacle.Radius, Obstacle.Rotation.Quaternion(), FColor::Yellow, false, -1.f);
 			}
 			else
 			{
